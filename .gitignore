@@ -1,0 +1,46 @@
+### silt runtime data ###
+data/
+*.log
+*.sst
+MANIFEST-*
+
+### Maven / build output ###
+target/
+build/
+out/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### Java ###
+*.class
+hs_err_pid*
+replay_pid*
+
+### IntelliJ IDEA ###
+# ignore everything except shared formatting settings
+.idea/
+.idea/*
+!.idea/google-java-format.xml
+!.idea/codeStyles/
+*.iws
+*.iml
+*.ipr
+.kotlin
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### VS Code ###
+.vscode/
+
+### macOS ###
+.DS_Store
