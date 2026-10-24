@@ -1,49 +1,57 @@
 package org.cfyash.silt.services;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.file.Path;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+// Deferred until the memtable exists: these need Database.get() to check what came back,
+// and Database.close() so a test can reopen the same dir in one JVM.
 class DatabaseRecoveryTest {
 
   @TempDir Path dir;
 
   @Test
-  @Disabled("TODO")
-  void freshDir_startsWithEmptyWal() {}
+  @Disabled("after memtable")
+  void open_missingDir_createsDirAndEmptyWal() {}
 
   @Test
-  @Disabled("TODO")
-  void reopen_afterCleanWrites_keepsAllRecords() {}
+  @Disabled("after memtable")
+  void reopen_afterCleanWrites_everyKeyReadable() {}
 
   @Test
-  @Disabled("TODO")
-  void reopen_continuesTokensAfterMaxToken() {
-    // write 3, reopen, write 1: new record's token is 4
+  @Disabled("after memtable")
+  void reopen_sameKeyWrittenTwice_newestValueWins() {}
+
+  @Test
+  @Disabled("after memtable")
+  void reopen_nextTokenIsMaxTokenPlusOne() {
+    // write 3, close, reopen, write 1: its token in the WAL is 4
   }
 
   @Test
-  @Disabled("TODO")
-  void garbageTail_isTruncated_andEarlierRecordsSurvive() {
-    // append random bytes to the WAL file, reopen
+  @Disabled("after memtable")
+  void reopen_garbageTail_isTruncated_earlierRecordsReadable() {
+    // append random bytes to the WAL, reopen
   }
 
   @Test
-  @Disabled("TODO")
-  void tornLastRecord_isTruncated() {
-    // cut the file a few bytes short of the last record's end, reopen
+  @Disabled("after memtable")
+  void reopen_tornLastRecord_isTruncated_earlierRecordsReadable() {
+    // cut the file inside the last record, reopen
   }
 
   @Test
-  @Disabled("TODO")
-  void corruptMiddleRecord_dropsItAndEverythingAfter() {
-    // point-in-time recovery
+  @Disabled("after memtable")
+  void reopen_corruptMiddleRecord_dropsItAndEverythingAfter() {
+    // point-in-time recovery: records before the corrupt one survive, none after
   }
 
   @Test
-  @Disabled("TODO")
-  void writesAfterTruncation_landAtNewEnd() {}
+  @Disabled("after memtable")
+  void reopen_afterTruncation_newWritesLandAtTruncatedEnd() {
+    // reopen twice: second reopen sees old good records + new ones, nothing in between
+  }
 }

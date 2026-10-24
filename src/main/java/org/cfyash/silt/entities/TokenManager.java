@@ -1,5 +1,7 @@
 package org.cfyash.silt.entities;
 
+import org.cfyash.silt.common.exceptions.SyncTokenUpdateException;
+
 public class TokenManager {
   private final Object lock;
   private volatile long currentToken;
@@ -36,6 +38,9 @@ public class TokenManager {
 
   public void incrementLastSynced(long token) {
     synchronized (lock) {
+      if (this.lastSyncedToken > token) {
+        throw new SyncTokenUpdateException("last sync token update rejected, value < currentSyncValue");
+      }
       this.lastSyncedToken = token;
     }
   }

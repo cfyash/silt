@@ -1,7 +1,6 @@
 package org.cfyash.silt.services;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -30,13 +29,36 @@ public class Database {
   private final Lock writeLock;
   private final AtomicBoolean shutdown;
   private final AtomicBoolean acceptWrites;
+  private final int syncLimit;
 
   public Database(String dir) throws IOException {
-    this.shutdown = new AtomicBoolean(false);
-    this.acceptWrites = new AtomicBoolean(false);
     Files.createDirectories(Path.of(dir));
-    this.walRecordHandler =
-        new WALRecordHandler(new WALFile(Path.of(dir, DatabaseConfig.WAL_FILENAME)));
+    this(new WALFile(Path.of(dir, DatabaseConfig.WAL_FILENAME)), DatabaseConfig.LINGER_TIME_MS, DatabaseConfig.SYNC_LIMIT);
+  }
+
+  Database(WALFile walFile, final long lingerMS, int syncLimit) {
+    this.syncLimit = syncLimit;
+    this.acceptWrites = new AtomicBoolean(false);
+    this.walRecordHandler = new WALRecordHandler(walFile);
+    long latestToken = rebuildMemtable();
+    this.tokenManager = new TokenManager(latestToken);
+
+    // init locks
+    this.rwLock = new ReentrantReadWriteLock();
+    this.writeLock = rwLock.writeLock();
+    this.readLock = rwLock.readLock();
+    this.syncLock = new ReentrantLock();
+    this.syncedCondition = syncLock.newCondition();
+
+    // start accepting writes
+    this.acceptWrites.set(true);
+    this.shutdown = new AtomicBoolean(false);
+
+    // start background flush thread
+    Thread.ofVirtual().name("background-flush-thread").start(() -> backgroundFlush(lingerMS));
+  }
+
+  private long rebuildMemtable() {
     long offset = 0;
     WALRecord record;
     long maxToken = 0;
@@ -55,39 +77,62 @@ public class Database {
       log.warn("error while reading wal file, might be a torn record, truncating WAL...");
       this.walRecordHandler.truncateWAL(offset);
     }
-    this.tokenManager = new TokenManager(maxToken + 1);
-    this.rwLock = new ReentrantReadWriteLock();
-    this.writeLock = rwLock.writeLock();
-    this.readLock = rwLock.readLock();
-    this.syncLock = new ReentrantLock();
-    this.syncedCondition = syncLock.newCondition();
-    this.acceptWrites.set(true);
-    Thread.startVirtualThread(this::backgroundFlush);
+    return maxToken;
   }
 
-  public void write(String key, byte[] value) {
+  public void write(byte[] key, byte[] value) {
+    validateWrite(key, value);
+    WALRecord record = writeToWAL(key, value);
+    sync(record);
+  }
+
+  private WALRecord writeToWAL(byte[] key, byte[] value) {
+    writeLock.lock();
+    WALRecord record;
+    try {
+      validateDBMode();
+      try {
+        long token = tokenManager.incrementAndGet();
+        long timestamp = Instant.now().toEpochMilli();
+        record = walRecordHandler.encodeAndWrite(token, timestamp, key, value);
+        tokenManager.setLastWrittenToken(token);
+      } catch (Exception e) {
+        log.error("WAL writer threw exception for key {}", key);
+        readOnlyMode();
+        throw new WALWriteException(e);
+      }
+    } finally {
+      writeLock.unlock();
+    }
+    return record;
+  }
+
+  private void validateDBMode() {
     if (!acceptWrites.get()) {
       throw new ReadOnlyModeException("db in read only mode, not accepting writes");
     }
     if (shutdown.get()) {
       throw new DatabaseShutdownException("db not serving request, might be shutting down");
     }
-    writeLock.lock();
-    WALRecord record;
-    try {
-      long token = tokenManager.incrementAndGet();
-      long timestamp = Instant.now().toEpochMilli();
-      record =
-          walRecordHandler.encodeAndWrite(
-              token, timestamp, key.getBytes(StandardCharsets.UTF_8), value);
-      tokenManager.setLastWrittenToken(token);
-    } catch (Exception e) {
-      acceptWrites.set(false);
-      throw new WALWriteException(e);
-    } finally {
-      writeLock.unlock();
+  }
+
+  private void validateWrite(byte[] key, byte[] value) {
+    if (key.length > DatabaseConfig.KEY_LIMIT) {
+      throw new RecordLimitException(
+          "key size > "
+              + DatabaseConfig.KEY_LIMIT
+              + "; please ensure keys are withing prescribed limits");
     }
-    sync(record);
+    if (key.length == 0) {
+      throw new RecordLimitException(
+          "key size == 0; please ensure keys are withing prescribed limits");
+    }
+    if (value.length > DatabaseConfig.VALUE_LIMIT) {
+      throw new RecordLimitException(
+          "value size > "
+              + DatabaseConfig.VALUE_LIMIT
+              + "; please ensure value are withing prescribed limits");
+    }
   }
 
   private void sync(WALRecord record) {
@@ -96,7 +141,7 @@ public class Database {
       if (!acceptWrites.get()) {
         throw new WALSyncException("read only mode");
       }
-      if (tokenManager.getPendingSyncs() >= DatabaseConfig.SYNC_LIMIT) {
+      if (tokenManager.getPendingSyncs() >= this.syncLimit) {
         performSync();
       } else {
         while (record.token() > tokenManager.getLastSynced()) {
@@ -107,40 +152,60 @@ public class Database {
         }
       }
     } catch (Exception e) {
-      this.acceptWrites.set(false);
-      syncedCondition.signalAll();
+      if (acceptWrites.get()) {
+        readOnlyMode();
+      }
       throw new WALSyncException("Exception while syncing, shifting to read only mode", e);
     } finally {
       syncLock.unlock();
     }
   }
 
-  private void backgroundFlush() {
+  private void backgroundFlush(long lingerTimeMs) {
     syncLock.lock();
     try {
       while (!shutdown.get() && acceptWrites.get()) {
-        boolean syncOccur =
-            syncedCondition.await(DatabaseConfig.LINGER_TIME_MS, TimeUnit.MILLISECONDS);
+        boolean syncOccur = syncedCondition.await(lingerTimeMs, TimeUnit.MILLISECONDS);
         if (!syncOccur && tokenManager.getPendingSyncs() > 0) {
           performSync();
         }
       }
     } catch (Exception e) {
-      this.acceptWrites.set(false);
-      syncedCondition.signalAll();
-      Thread.currentThread().interrupt();
+      log.error(
+          "error while syncing in background flush thread at: {}", Instant.now().toEpochMilli(), e);
+      if (acceptWrites.get()) {
+        readOnlyMode();
+      }
     } finally {
+      if (!shutdown.get()) readOnlyMode();
       syncLock.unlock();
     }
   }
 
   private void performSync() {
-    if (!acceptWrites.get()) {
-      throw new WALSyncException("read only mode");
+    syncLock.lock();
+    try {
+      log.info("trying to sync at: {}", Instant.now().toEpochMilli());
+      if (!acceptWrites.get()) {
+        throw new WALSyncException("read only mode");
+      }
+      long syncToken = tokenManager.getLastWritten();
+      walRecordHandler.syncToDisk();
+      tokenManager.incrementLastSynced(syncToken);
+      syncedCondition.signalAll();
+    } finally {
+      syncLock.unlock();
     }
-    long syncToken = tokenManager.getLastWritten();
-    walRecordHandler.syncToDisk();
-    tokenManager.incrementLastSynced(syncToken);
-    syncedCondition.signalAll();
+  }
+
+  private void readOnlyMode() {
+    syncLock.lock();
+    try {
+      log.warn("shifting to read only mode at: {}", Instant.now().toEpochMilli());
+      acceptWrites.set(false);
+      syncedCondition.signalAll();
+    } finally {
+      syncLock.unlock();
+    }
   }
 }

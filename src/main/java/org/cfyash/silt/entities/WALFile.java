@@ -62,7 +62,9 @@ public class WALFile implements AutoCloseable {
   }
 
   @Override
-  public void close() throws Exception {}
+  public void close() throws Exception {
+    channel.close();
+  }
 
   public void truncate(long offset) {
     try {

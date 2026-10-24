@@ -6,6 +6,7 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.cfyash.silt.common.exceptions.*;
 import org.cfyash.silt.common.utils.CRC32Utils;
+import org.cfyash.silt.config.DatabaseConfig;
 import org.cfyash.silt.entities.WALFile;
 import org.cfyash.silt.models.WALRecord;
 
@@ -64,7 +65,11 @@ public class WALRecordHandler implements AutoCloseable {
     int keySize = header.getInt();
     int valueSize = header.getInt();
     if (keySize < 0 || valueSize < 0) {
-      throw new UnexpectedEOFException("key or value size is negative");
+      throw new RecordLimitException("key or value size is negative");
+    }
+    if ((long) keySize > DatabaseConfig.KEY_LIMIT
+        || (long) valueSize > DatabaseConfig.VALUE_LIMIT) {
+      throw new RecordLimitException("key or value size found greater than allowed value");
     }
     if (offset + (long) HEADER_LENGTH + (long) keySize + (long) valueSize > walFile.size()) {
       throw new RecordLimitException("read record length greater than WAL file size");
@@ -75,6 +80,7 @@ public class WALRecordHandler implements AutoCloseable {
     if (readBytes != body.limit()) {
       throw new UnexpectedEOFException("torn record could not read complete body");
     }
+    body.rewind();
     int calculatedChecksum =
         CRC32Utils.generateCheckSum(List.of(header.slice(4, header.limit() - 4), body));
     if (checksum != calculatedChecksum) {
