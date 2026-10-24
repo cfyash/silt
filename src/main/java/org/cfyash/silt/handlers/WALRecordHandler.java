@@ -8,22 +8,25 @@ import org.cfyash.silt.common.exceptions.*;
 import org.cfyash.silt.common.utils.CRC32Utils;
 import org.cfyash.silt.config.DatabaseConfig;
 import org.cfyash.silt.entities.WALFile;
+import org.cfyash.silt.models.RecordType;
 import org.cfyash.silt.models.WALRecord;
 
 @RequiredArgsConstructor
 public class WALRecordHandler implements AutoCloseable {
 
-  private static final int HEADER_LENGTH = 28;
+  private static final int HEADER_LENGTH = 29;
 
   private final WALFile walFile;
 
-  public WALRecord encodeAndWrite(long token, long timestamp, byte[] key, byte[] value) {
+  public WALRecord encodeAndWrite(
+      long token, long timestamp, byte[] key, byte[] value, RecordType type) {
     ByteBuffer recordBuf =
         ByteBuffer.allocate(HEADER_LENGTH + key.length + value.length)
             .order(ByteOrder.LITTLE_ENDIAN);
     recordBuf.position(4);
     recordBuf.putLong(token);
     recordBuf.putLong(timestamp);
+    recordBuf.put(type.getCode());
     recordBuf.putInt(key.length);
     recordBuf.putInt(value.length);
     recordBuf.put(key);
@@ -41,6 +44,7 @@ public class WALRecordHandler implements AutoCloseable {
             .key(key)
             .value(value)
             .size(recordBuf.limit())
+            .type(type)
             .build();
     walFile.write(recordBuf);
     return record;
@@ -62,6 +66,7 @@ public class WALRecordHandler implements AutoCloseable {
     int checksum = header.getInt();
     long token = header.getLong();
     long timestamp = header.getLong();
+    RecordType type = RecordType.fromCode(header.get());
     int keySize = header.getInt();
     int valueSize = header.getInt();
     if (keySize < 0 || valueSize < 0) {
@@ -100,6 +105,7 @@ public class WALRecordHandler implements AutoCloseable {
         .key(key)
         .value(value)
         .size(header.limit() + body.limit())
+        .type(type)
         .build();
   }
 
@@ -119,5 +125,7 @@ public class WALRecordHandler implements AutoCloseable {
   }
 
   @Override
-  public void close() throws Exception {}
+  public void close() throws Exception {
+    walFile.close();
+  }
 }

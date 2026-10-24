@@ -17,6 +17,7 @@ import org.cfyash.silt.common.exceptions.RecordLimitException;
 import org.cfyash.silt.common.exceptions.UnexpectedEOFException;
 import org.cfyash.silt.config.DatabaseConfig;
 import org.cfyash.silt.entities.WALFile;
+import org.cfyash.silt.models.RecordType;
 import org.cfyash.silt.models.WALRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.RepeatedTest;
@@ -43,7 +44,8 @@ class WALRecordHandlerTest {
     var key = TestUtils.generateString(1000);
     var value = TestUtils.generateByteArr(1000);
     WALRecord record =
-        handler.encodeAndWrite(token, timestamp, key.getBytes(StandardCharsets.UTF_8), value);
+        handler.encodeAndWrite(
+            token, timestamp, key.getBytes(StandardCharsets.UTF_8), value, RecordType.PUT);
 
     assertEquals(token, record.token());
     assertEquals(timestamp, record.timestamp());
@@ -141,8 +143,8 @@ class WALRecordHandlerTest {
     var records = generateContent(new int[] {1, 1}, new int[] {1, 1}, new int[] {1, 1});
     var filePath = Path.of(dir.toUri().getPath(), "0001.log");
     FileChannel fileChannel = FileChannel.open(filePath, StandardOpenOption.WRITE);
-    int keyStart = 28;
-    int valueEnd = 28 + records.getFirst().keySize() + records.getFirst().valueSize() - 1;
+    int keyStart = 29;
+    int valueEnd = 29 + records.getFirst().keySize() + records.getFirst().valueSize() - 1;
     fileChannel.truncate(TestUtils.generateIntInRange(keyStart, valueEnd));
     fileChannel.close();
     var handler2 = new WALRecordHandler(new WALFile(filePath));
@@ -163,13 +165,14 @@ class WALRecordHandlerTest {
     byte[] value = TestUtils.generateByteArr(TestUtils.generateIntInRange(0, 500));
     long token = TestUtils.generateToken();
     long timestamp = TestUtils.generateTimestamp();
-    handler.encodeAndWrite(token, timestamp, key.getBytes(StandardCharsets.UTF_8), value);
+    handler.encodeAndWrite(
+        token, timestamp, key.getBytes(StandardCharsets.UTF_8), value, RecordType.PUT);
     FileChannel fileChannel =
         FileChannel.open(Path.of(dir.toUri().getPath(), "0001.log"), StandardOpenOption.WRITE);
     ByteBuffer bf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
     bf.putInt(-1);
     bf.rewind();
-    fileChannel.write(bf, 20);
+    fileChannel.write(bf, 21);
     fileChannel.close();
     assertThrows(
         RecordLimitException.class,
@@ -188,7 +191,8 @@ class WALRecordHandlerTest {
     byte[] value = TestUtils.generateByteArr(TestUtils.generateIntInRange(0, 500));
     long token = TestUtils.generateToken();
     long timestamp = TestUtils.generateTimestamp();
-    handler.encodeAndWrite(token, timestamp, key.getBytes(StandardCharsets.UTF_8), value);
+    handler.encodeAndWrite(
+        token, timestamp, key.getBytes(StandardCharsets.UTF_8), value, RecordType.PUT);
     FileChannel fileChannel =
         FileChannel.open(Path.of(dir.toUri().getPath(), "0001.log"), StandardOpenOption.WRITE);
     ByteBuffer bf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
@@ -213,7 +217,8 @@ class WALRecordHandlerTest {
     byte[] value = TestUtils.generateByteArr(TestUtils.generateIntInRange(0, 500));
     long token = TestUtils.generateToken();
     long timestamp = TestUtils.generateTimestamp();
-    handler.encodeAndWrite(token, timestamp, key.getBytes(StandardCharsets.UTF_8), value);
+    handler.encodeAndWrite(
+        token, timestamp, key.getBytes(StandardCharsets.UTF_8), value, RecordType.PUT);
     FileChannel fileChannel =
         FileChannel.open(Path.of(dir.toUri().getPath(), "0001.log"), StandardOpenOption.WRITE);
     ByteBuffer bf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
@@ -238,7 +243,8 @@ class WALRecordHandlerTest {
     byte[] value = TestUtils.generateByteArr(TestUtils.generateIntInRange(0, 500));
     long token = TestUtils.generateToken();
     long timestamp = TestUtils.generateTimestamp();
-    handler.encodeAndWrite(token, timestamp, key.getBytes(StandardCharsets.UTF_8), value);
+    handler.encodeAndWrite(
+        token, timestamp, key.getBytes(StandardCharsets.UTF_8), value, RecordType.PUT);
     FileChannel fileChannel =
         FileChannel.open(Path.of(dir.toUri().getPath(), "0001.log"), StandardOpenOption.WRITE);
     ByteBuffer bf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
@@ -283,8 +289,9 @@ class WALRecordHandlerTest {
     byte[] value = TestUtils.generateByteArr(TestUtils.generateIntInRange(0, 500));
     long token = TestUtils.generateToken();
     long timestamp = TestUtils.generateTimestamp();
-    int recordLength = 28 + key.length() + value.length;
-    handler.encodeAndWrite(token, timestamp, key.getBytes(StandardCharsets.UTF_8), value);
+    int recordLength = 29 + key.length() + value.length;
+    handler.encodeAndWrite(
+        token, timestamp, key.getBytes(StandardCharsets.UTF_8), value, RecordType.PUT);
     assertFalse(handler.hasNext(recordLength));
   }
 
@@ -298,7 +305,8 @@ class WALRecordHandlerTest {
       var value =
           TestUtils.generateByteArr(TestUtils.generateIntInRange(valueRange[0], valueRange[1]));
       items.add(
-          handler.encodeAndWrite(token, timestamp, key.getBytes(StandardCharsets.UTF_8), value));
+          handler.encodeAndWrite(
+              token, timestamp, key.getBytes(StandardCharsets.UTF_8), value, RecordType.PUT));
     }
     return items;
   }
@@ -316,5 +324,6 @@ class WALRecordHandlerTest {
     assertEquals(a.valueSize(), b.valueSize());
     assertArrayEquals(a.key(), b.key());
     assertArrayEquals(a.value(), b.value());
+    assertEquals(a.type(), b.type());
   }
 }

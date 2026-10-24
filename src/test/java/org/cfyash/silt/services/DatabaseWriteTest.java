@@ -9,8 +9,6 @@ import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
 import lombok.extern.slf4j.Slf4j;
 import org.cfyash.silt.TestUtils;
 import org.cfyash.silt.common.exceptions.*;
@@ -83,7 +81,7 @@ class DatabaseWriteTest {
   @Disabled("TODO")
   @Timeout(5)
   void singleWrite_belowSyncLimit_isAckedByLingerTimer() {
-    // one writer, nobody else: returns after ~LINGER_TIME_MS, not never
+    // one writer, nobody else: returns after ~LINGER_TIME_MS
   }
 
   @Test
@@ -129,18 +127,17 @@ class DatabaseWriteTest {
     // writer A waits in sync(), writer B's WAL write throws: A gets an exception, no hang
     var exceptions = Collections.synchronizedList(new java.util.ArrayList<Throwable>());
     try (var walMock = mock(WALFile.class)) {
-      var lockF = Database.class.getDeclaredField("syncLock");
-      var condF = Database.class.getDeclaredField("syncedCondition");
-      lockF.setAccessible(true);
-      condF.setAccessible(true);
+      var coordinatorF = Database.class.getDeclaredField("syncCoordinator");
+      coordinatorF.setAccessible(true);
 
-      var dbWithMock = new Database(walMock, 50000L, 10);
-      var lock = (ReentrantLock) lockF.get(dbWithMock);
-      var cond = (Condition) condF.get(dbWithMock);
+      var dbWithMock = new Database(walMock, 50000L, 10, 10);
+      var coordinator = (SyncCoordinator) coordinatorF.get(dbWithMock);
+      var lock = coordinator.getLock();
+      var cond = coordinator.getCondition();
 
       AtomicBoolean failWrites = new AtomicBoolean(false);
       doAnswer(
-              inv -> {
+              _ -> {
                 if (failWrites.get()) throw new WALWriteException("mocked wal write exception");
                 return null;
               })
@@ -188,7 +185,7 @@ class DatabaseWriteTest {
   void writeFailure_laterWritesThrowReadOnlyMode() throws Exception {
     var exceptions = Collections.synchronizedList(new java.util.ArrayList<Throwable>());
     try (var walMock = mock(WALFile.class)) {
-      var dbWithMock = new Database(walMock, 5000L, 10);
+      var dbWithMock = new Database(walMock, 5000L, 10, 10);
       var k = TestUtils.generateByteArr(10);
       var v = TestUtils.generateByteArr(10);
       doThrow(WALWriteException.class).when(walMock).write(any());
@@ -222,14 +219,13 @@ class DatabaseWriteTest {
       doThrow(WALSyncException.class).when(walMock).fsync();
       var k = TestUtils.generateByteArr(10);
       var v = TestUtils.generateByteArr(10);
-      var lockF = Database.class.getDeclaredField("syncLock");
-      var condF = Database.class.getDeclaredField("syncedCondition");
-      lockF.setAccessible(true);
-      condF.setAccessible(true);
+      var coordinatorF = Database.class.getDeclaredField("syncCoordinator");
+      coordinatorF.setAccessible(true);
 
-      var dbWithMock = new Database(walMock, 50000L, 10);
-      var lock = (ReentrantLock) lockF.get(dbWithMock);
-      var cond = (Condition) condF.get(dbWithMock);
+      var dbWithMock = new Database(walMock, 50000L, 10, 10);
+      var coordinator = (SyncCoordinator) coordinatorF.get(dbWithMock);
+      var lock = coordinator.getLock();
+      var cond = coordinator.getCondition();
 
       CountDownLatch awoke = new CountDownLatch(9);
       for (int i = 0; i < 9; i++) {
@@ -248,7 +244,8 @@ class DatabaseWriteTest {
       }
 
       int inSyncThreads = 0;
-      while (inSyncThreads < 10) { // < 10 as flusher is also waiting condition, 9 writers + 1 flusher
+      while (inSyncThreads
+          < 10) { // < 10 as flusher is also waiting condition, 9 writers + 1 flusher
         lock.lock();
         try {
           inSyncThreads = lock.getWaitQueueLength(cond);
@@ -293,7 +290,7 @@ class DatabaseWriteTest {
       doThrow(WALSyncException.class).when(walMock).fsync();
       var k = TestUtils.generateByteArr(10);
       var v = TestUtils.generateByteArr(10);
-      var dbWithMock = new Database(walMock, 100L, 10);
+      var dbWithMock = new Database(walMock, 100L, 10, 10);
       var t0 =
           Thread.ofVirtual()
               .name("test-thread-" + 0)
@@ -328,5 +325,10 @@ class DatabaseWriteTest {
         assertInstanceOf(ReadOnlyModeException.class, ex);
       }
     }
+  }
+
+  @AfterEach
+  void tearDown() throws Exception {
+    db.close();
   }
 }

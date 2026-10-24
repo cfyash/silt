@@ -11,4 +11,5 @@ public record WALRecord(
     int valueSize,
     byte[] key,
     byte[] value,
-    long size) {}
+    long size,
+    RecordType type) {}
